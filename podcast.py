@@ -20,7 +20,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 CHANNEL_URL = "https://www.youtube.com/@tsundoku-ch/videos"
-SHOW_TITLE = "積読チャンネル（音声版）"
+SHOW_TITLE = "積読チャンネル"
 RELEASE_TAG = "episodes"
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
