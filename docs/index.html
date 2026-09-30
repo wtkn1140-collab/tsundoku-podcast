@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1c1a17">
+<title>積読チャンネル（音声版）</title>
+<style>
+:root{--bg:#f6f3ee;--card:#fff;--ink:#1c1a17;--sub:#6f6a62;--line:#e4dfd6;--accent:#b4532a;--bar:#1c1a17;--barink:#f6f3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#141311;--card:#1f1d1a;--ink:#ece8e1;--sub:#9d978d;--line:#2e2b27;--accent:#e0875c;--bar:#26231f;--barink:#ece8e1}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Hiragino Sans",sans-serif;padding-bottom:230px}
+header{padding:28px 16px 12px;max-width:720px;margin:auto}
+h1{font-size:22px;margin:0}
+header p{margin:4px 0 0;color:var(--sub);font-size:13px}
+.tabs{display:flex;gap:8px;margin-top:14px}
+.tabs button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 14px;font-size:13px}
+.tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+ul{list-style:none;margin:0 auto;padding:0 16px;max-width:720px}
+li{display:flex;gap:12px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:10px;cursor:pointer;align-items:center}
+li.now{border-color:var(--accent)}
+li.done{opacity:.5}
+li img{width:96px;height:54px;object-fit:cover;border-radius:6px;flex:none;background:var(--line)}
+li .t{font-size:14px;font-weight:600;line-height:1.35}
+li .m{font-size:12px;color:var(--sub);margin-top:4px}
+.prog{height:3px;background:var(--line);border-radius:2px;margin-top:6px;overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent)}
+.sub{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.sub a,.sub button{font-size:13px;border-radius:8px;padding:7px 12px;border:1px solid var(--accent);color:var(--accent);background:none;text-decoration:none}
+#bar{position:fixed;left:0;right:0;bottom:0;background:var(--bar);color:var(--barink);padding:14px 16px calc(14px + env(safe-area-inset-bottom));display:none}
+#bar .in{max-width:720px;margin:auto}
+#np{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#seek{width:100%;margin:10px 0 2px;accent-color:var(--accent)}
+.times{display:flex;justify-content:space-between;font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}
+.ctl{display:flex;align-items:center;justify-content:center;gap:22px;margin-top:6px}
+.ctl button{background:none;border:0;color:inherit;font-size:15px;padding:6px}
+#pp{font-size:30px;width:56px;height:56px;border-radius:50%;background:var(--accent);color:#fff}
+#rate{border:1px solid currentColor;border-radius:999px;padding:3px 10px;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>積読チャンネル（音声版）</h1>
+  <p>再生位置は自動で保存されます</p>
+  <div class="sub"><a id="applepod" href="#">Apple Podcasts で購読</a><button id="copy">フィードURLをコピー</button></div>
+  <div class="tabs"><button data-f="all" class="on">すべて</button><button data-f="unplayed">未再生</button></div>
+</header>
+<ul id="list"></ul>
+<div id="bar"><div class="in">
+  <div id="np"></div>
+  <input id="seek" type="range" min="0" max="1000" value="0">
+  <div class="times"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+  <div class="ctl">
+    <button id="back">↺15</button>
+    <button id="pp">▶︎</button>
+    <button id="fwd">30↻</button>
+    <button id="rate">1.0×</button>
+  </div>
+</div></div>
+<audio id="a" preload="metadata"></audio>
+<script>
+const EPS = [];
+const FEED = 'https://wtkn1140-collab.github.io/tsundoku-podcast/feed.xml';
+document.getElementById('applepod').href = 'podcasts://' + FEED.replace(/^https?:\/\//, '');
+document.getElementById('copy').onclick = async ev => {
+  try{ await navigator.clipboard.writeText(FEED); ev.target.textContent = 'コピーしました'; }
+  catch(e){ prompt('このURLをポッドキャストアプリに登録', FEED); }
+};
+const a = document.getElementById('a'), list = document.getElementById('list');
+const RATES = [1, 1.25, 1.5, 1.75, 2];
+let cur = null, filter = 'all';
+
+function load(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } }
+function save(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+let pos = load('pos', {}), done = load('done', {}), rate = load('rate', 1);
+
+function fmt(s){ s = Math.floor(s||0); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = String(s%60).padStart(2,'0');
+  return h ? `${h}:${String(m).padStart(2,'0')}:${x}` : `${m}:${x}`; }
+function date(d){ return d ? `${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6)}` : ''; }
+
+function render(){
+  list.innerHTML = '';
+  EPS.filter(e => filter === 'all' || !done[e.id]).forEach(e => {
+    const li = document.createElement('li');
+    li.className = (cur && cur.id === e.id ? 'now ' : '') + (done[e.id] ? 'done' : '');
+    const p = done[e.id] ? 100 : Math.min(100, (pos[e.id]||0) / (e.duration||1) * 100);
+    const left = done[e.id] ? '再生済み' : pos[e.id] ? `残り ${fmt(e.duration - pos[e.id])}` : fmt(e.duration);
+    li.innerHTML = `<img loading="lazy" src="${e.thumbnail}" alt=""><div style="min-width:0;flex:1">
+      <div class="t"></div><div class="m">${date(e.upload_date)}・${left}</div>
+      <div class="prog"><i style="width:${p}%"></i></div></div>`;
+    li.querySelector('.t').textContent = e.title;
+    li.onclick = () => play(e);
+    list.appendChild(li);
+  });
+}
+
+function play(e){
+  if (cur && cur.id === e.id){ a.paused ? a.play() : a.pause(); return; }
+  cur = e;
+  a.src = e.url;
+  a.playbackRate = rate;
+  const start = done[e.id] ? 0 : (pos[e.id] || 0);
+  a.addEventListener('loadedmetadata', () => { a.currentTime = start; a.playbackRate = rate; }, {once:true});
+  a.play();
+  document.getElementById('bar').style.display = 'block';
+  document.getElementById('np').textContent = e.title;
+  if ('mediaSession' in navigator){
+    navigator.mediaSession.metadata = new MediaMetadata({title: e.title, artist: '積読チャンネル',
+      artwork: [{src: e.thumbnail, sizes: '480x360', type: 'image/jpeg'}]});
+  }
+  render();
+}
+
+let lastSave = 0;
+a.addEventListener('timeupdate', () => {
+  if (!cur) return;
+  document.getElementById('cur').textContent = fmt(a.currentTime);
+  document.getElementById('dur').textContent = fmt(a.duration);
+  document.getElementById('seek').value = a.duration ? a.currentTime / a.duration * 1000 : 0;
+  if (Date.now() - lastSave > 5000){ pos[cur.id] = a.currentTime; save('pos', pos); lastSave = Date.now(); }
+});
+a.addEventListener('pause', () => { if (cur){ pos[cur.id] = a.currentTime; save('pos', pos); render(); } });
+a.addEventListener('play', () => document.getElementById('pp').textContent = '❚❚');
+a.addEventListener('pause', () => document.getElementById('pp').textContent = '▶︎');
+a.addEventListener('ended', () => {
+  done[cur.id] = true; delete pos[cur.id]; save('done', done); save('pos', pos);
+  const next = EPS.slice(0, EPS.findIndex(e => e.id === cur.id)).reverse().find(e => !done[e.id]);
+  next ? play(next) : render();
+});
+
+const skip = s => a.currentTime = Math.max(0, Math.min(a.duration || 0, a.currentTime + s));
+document.getElementById('pp').onclick = () => a.paused ? a.play() : a.pause();
+document.getElementById('back').onclick = () => skip(-15);
+document.getElementById('fwd').onclick = () => skip(30);
+document.getElementById('seek').oninput = ev => { if (a.duration) a.currentTime = ev.target.value / 1000 * a.duration; };
+const rateBtn = document.getElementById('rate');
+rateBtn.textContent = rate.toFixed(2).replace(/0$/,'') + '×';
+rateBtn.onclick = () => { rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length]; a.playbackRate = rate; save('rate', rate);
+  rateBtn.textContent = rate.toFixed(2).replace(/0$/,'') + '×'; };
+if ('mediaSession' in navigator){
+  navigator.mediaSession.setActionHandler('seekbackward', () => skip(-15));
+  navigator.mediaSession.setActionHandler('seekforward', () => skip(30));
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  filter = b.dataset.f; render();
+});
+render();
+</script>
+</body>
+</html>

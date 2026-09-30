@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel>
+  <title>積読チャンネル（音声版）</title>
+  <link>https://www.youtube.com/@tsundoku-ch/videos</link>
+  <language>ja</language>
+  <description>YouTube「積読チャンネル」の音声を個人用にポッドキャスト化したフィード</description>
+  <itunes:author>積読チャンネル</itunes:author>
+  <itunes:block>Yes</itunes:block>
+  <itunes:image href=""/>
+
+</channel>
+</rss>
