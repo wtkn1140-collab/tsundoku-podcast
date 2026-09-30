@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""YouTubeチャンネルをポッドキャスト化する（GitHub Actions で毎日実行）。
+"""YouTubeチャンネルをポッドキャスト化する。
 
+取得は Mac（launchd で定期実行）、配信は GitHub。
 音声ファイルは GitHub Release「episodes」に置き、
 フィード(docs/feed.xml) とWebプレーヤー(docs/index.html) は GitHub Pages で配信する。
+（YouTube が GitHub のサーバーからの取得をボット判定で拒否するため、取得は自宅回線で行う）
 
-  python podcast.py update [--limit 10] [--keep 30]
+  python3 podcast.py update [--limit 10] [--keep 30] [--no-upload]
 """
 import argparse
 import email.utils
@@ -24,10 +26,12 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 WORK_DIR = os.path.join(ROOT, "work")
 DOCS = os.path.join(ROOT, "docs")
 DB_PATH = os.path.join(DOCS, "episodes.json")
-YTDLP_BASE = ["yt-dlp", "--js-runtimes", "node", "--no-warnings", "--retries", "10"]
+YTDLP = os.path.join(ROOT, "bin", "yt-dlp")
+GH = os.path.join(ROOT, "bin", "gh")
+YTDLP_BASE = [YTDLP, "--js-runtimes", "node", "--no-warnings", "--retries", "10"]
 
-REPO = os.environ.get("GITHUB_REPOSITORY", "OWNER/REPO")
-IN_CI = os.environ.get("GITHUB_ACTIONS") == "true"
+REPO = "wtkn1140-collab/tsundoku-podcast"
+UPLOAD = True
 OWNER, NAME = REPO.split("/", 1)
 PAGES_URL = "https://{}.github.io/{}/".format(OWNER.lower(), NAME)
 AUDIO_BASE = "https://github.com/{}/releases/download/{}/".format(REPO, RELEASE_TAG)
@@ -46,7 +50,7 @@ def save_db(db):
 
 
 def gh(*args, check=True):
-    return subprocess.run(["gh"] + list(args), capture_output=True, text=True, check=check)
+    return subprocess.run([GH] + list(args), capture_output=True, text=True, check=check)
 
 
 def list_channel(limit):
@@ -95,8 +99,8 @@ def download(vid):
 
 def publish_audio(ep):
     path = os.path.join(WORK_DIR, ep["file"])
-    if not IN_CI:
-        print("   （ローカル実行のためアップロードは省略）")
+    if not UPLOAD:
+        print("   （--no-upload のためアップロードは省略）")
         return True
     r = gh("release", "upload", RELEASE_TAG, path, "--clobber", "--repo", REPO, check=False)
     os.remove(path)
@@ -106,7 +110,7 @@ def publish_audio(ep):
 
 
 def ensure_release():
-    if IN_CI and gh("release", "view", RELEASE_TAG, "--repo", REPO, check=False).returncode != 0:
+    if UPLOAD and gh("release", "view", RELEASE_TAG, "--repo", REPO, check=False).returncode != 0:
         gh("release", "create", RELEASE_TAG, "--repo", REPO, "--title", "音声ファイル置き場",
            "--notes", "podcast.py が自動で管理しています")
 
@@ -185,12 +189,30 @@ def write_player(db):
 def prune(db, keep):
     for ep in sorted_episodes(db)[keep:]:
         print(" 🗑 古い回を削除:", ep["title"])
-        if IN_CI:
+        if UPLOAD:
             gh("release", "delete-asset", RELEASE_TAG, ep["file"], "--yes", "--repo", REPO, check=False)
         del db[ep["id"]]
 
 
+def git(*args):
+    helper = "!'{}' auth git-credential".format(GH)
+    return subprocess.run(["git", "-c", "credential.helper=", "-c", "credential.helper=" + helper] + list(args),
+                          cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+
+
+def push_docs():
+    git("add", "docs")
+    if git("diff", "--cached", "--quiet").returncode == 0:
+        return
+    git("commit", "-m", "エピソード更新 " + datetime.now().strftime("%Y-%m-%d %H:%M"))
+    r = git("push", "origin", "main")
+    print("GitHubへ反映しました" if r.returncode == 0 else "push失敗: " + r.stderr.strip())
+
+
 def cmd_update(args):
+    global UPLOAD
+    UPLOAD = not args.no_upload
+    subprocess.run([YTDLP, "-U"], capture_output=True)  # YouTube側の仕様変更に追従
     os.makedirs(WORK_DIR, exist_ok=True)
     os.makedirs(DOCS, exist_ok=True)
     ensure_release()
@@ -214,8 +236,9 @@ def cmd_update(args):
     save_db(db)
     write_feed(db)
     write_player(db)
+    if UPLOAD:
+        push_docs()
     print("完了: {} エピソード / フィード: {}feed.xml".format(len(db), PAGES_URL))
-    # 全部失敗したときは Actions を赤くして気づけるようにする
     return 1 if new and failed == len(new) else 0
 
 
@@ -225,6 +248,7 @@ def main():
     u = sub.add_parser("update", help="新着を取得して公開")
     u.add_argument("--limit", type=int, default=10, help="チャンネルの最新何件を対象にするか")
     u.add_argument("--keep", type=int, default=30, help="公開しておく最大件数（0=無制限）")
+    u.add_argument("--no-upload", action="store_true", help="GitHubへ公開せず手元で試すだけ")
     args = p.parse_args()
     return cmd_update(args)
 

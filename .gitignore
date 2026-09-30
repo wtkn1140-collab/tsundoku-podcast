@@ -1,2 +1,4 @@
 work/
+bin/
+logs/
 __pycache__/
