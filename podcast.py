@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 from datetime import datetime, timezone
 
 CHANNEL_URL = "https://www.youtube.com/@tsundoku-ch/videos"
@@ -166,7 +167,7 @@ def write_feed(db):
 </channel>
 </rss>
 """.format(title=esc(SHOW_TITLE), ch=esc(CHANNEL_URL),
-           img=esc(eps[0]["thumbnail"] if eps else ""), items="\n".join(items))
+           img=esc(PAGES_URL + "cover.jpg"), items="\n".join(items))
     with open(os.path.join(DOCS, "feed.xml"), "w", encoding="utf-8") as f:
         f.write(feed)
 
@@ -209,6 +210,24 @@ def push_docs():
     print("GitHubへ反映しました" if r.returncode == 0 else "push失敗: " + r.stderr.strip())
 
 
+def ensure_cover():
+    """番組のカバーアートとしてチャンネルのアイコン画像を docs/cover.jpg に保存する（初回のみ）。"""
+    path = os.path.join(DOCS, "cover.jpg")
+    if os.path.exists(path):
+        return
+    out = subprocess.run(
+        YTDLP_BASE + ["--flat-playlist", "--playlist-items", "0", "-J", CHANNEL_URL.rsplit("/", 1)[0]],
+        capture_output=True, text=True)
+    thumbs = json.loads(out.stdout).get("thumbnails", []) if out.returncode == 0 else []
+    avatar = [t for t in thumbs if t.get("id") == "avatar_uncropped"]
+    if avatar:
+        urllib.request.urlretrieve(avatar[0]["url"], path)
+        # 取得できる画像はPNGのことがあるので、Apple Podcasts向けに本物のJPEGにする
+        subprocess.run(["sips", "-s", "format", "jpeg", path, "--out", path], capture_output=True)
+    else:
+        print("   チャンネルアイコンを取得できませんでした")
+
+
 def cmd_update(args):
     global UPLOAD
     UPLOAD = not args.no_upload
@@ -216,6 +235,7 @@ def cmd_update(args):
     os.makedirs(WORK_DIR, exist_ok=True)
     os.makedirs(DOCS, exist_ok=True)
     ensure_release()
+    ensure_cover()
     db = load_db()
     print("チャンネルの新着を確認中…")
     videos = list_channel(args.limit)

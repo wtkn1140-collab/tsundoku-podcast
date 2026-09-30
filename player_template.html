@@ -43,7 +43,7 @@ li .m{font-size:12px;color:var(--sub);margin-top:4px}
 <header>
   <h1>__TITLE__</h1>
   <p>再生位置は自動で保存されます</p>
-  <div class="sub"><a id="applepod" href="#">Apple Podcasts で購読</a><button id="copy">フィードURLをコピー</button></div>
+  <div class="sub"><button id="copy">フィードURLをコピー</button></div>
   <div class="tabs"><button data-f="all" class="on">すべて</button><button data-f="unplayed">未再生</button></div>
 </header>
 <ul id="list"></ul>
@@ -62,7 +62,6 @@ li .m{font-size:12px;color:var(--sub);margin-top:4px}
 <script>
 const EPS = __EPISODES__;
 const FEED = '__FEED_URL__';
-document.getElementById('applepod').href = 'podcasts://' + FEED.replace(/^https?:\/\//, '');
 document.getElementById('copy').onclick = async ev => {
   try{ await navigator.clipboard.writeText(FEED); ev.target.textContent = 'コピーしました'; }
   catch(e){ prompt('このURLをポッドキャストアプリに登録', FEED); }

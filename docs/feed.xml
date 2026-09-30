@@ -7,7 +7,7 @@
   <description>YouTube「積読チャンネル」の音声を個人用にポッドキャスト化したフィード</description>
   <itunes:author>積読チャンネル</itunes:author>
   <itunes:block>Yes</itunes:block>
-  <itunes:image href="https://i.ytimg.com/vi/PKzACHpUHNk/maxresdefault.jpg"/>
+  <itunes:image href="https://wtkn1140-collab.github.io/tsundoku-podcast/cover.jpg"/>
   <item>
     <title>独裁者の倒し方、教えます。</title>
     <guid isPermaLink="false">yt:PKzACHpUHNk</guid>
