@@ -2,11 +2,12 @@
 """YouTubeチャンネルをポッドキャスト化する。
 
 取得は Mac（launchd で定期実行）、配信は GitHub。
-音声ファイルは GitHub Release「episodes」に置き、
-フィード(docs/feed.xml) とWebプレーヤー(docs/index.html) は GitHub Pages で配信する。
+音声ファイルは音声専用リポジトリ（audio-site/ に clone）の GitHub Pages、
+フィード(docs/feed.xml) とWebプレーヤー(docs/index.html) はこのリポジトリの GitHub Pages で配信する。
+（GitHub Release は application/octet-stream で返すため Apple Podcasts で再生できない）
 （YouTube が GitHub のサーバーからの取得をボット判定で拒否するため、取得は自宅回線で行う）
 
-  python3 podcast.py update [--limit 10] [--keep 30] [--no-upload]
+  python3 podcast.py update [--limit 10] [--keep 15] [--no-upload]
 """
 import argparse
 import email.utils
@@ -21,7 +22,6 @@ from datetime import datetime, timezone
 
 CHANNEL_URL = "https://www.youtube.com/@tsundoku-ch/videos"
 SHOW_TITLE = "積読チャンネル"
-RELEASE_TAG = "episodes"
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WORK_DIR = os.path.join(ROOT, "work")
@@ -35,7 +35,11 @@ REPO = "wtkn1140-collab/tsundoku-podcast"
 UPLOAD = True
 OWNER, NAME = REPO.split("/", 1)
 PAGES_URL = "https://{}.github.io/{}/".format(OWNER.lower(), NAME)
-AUDIO_BASE = "https://github.com/{}/releases/download/{}/".format(REPO, RELEASE_TAG)
+AUDIO_REPO = REPO + "-audio"
+AUDIO_SITE = os.path.join(ROOT, "audio-site")
+AUDIO_BASE = "https://{}.github.io/{}/".format(OWNER.lower(), AUDIO_REPO.split("/", 1)[1])
+MAX_FILE_SIZE = 95 * 1024 * 1024       # GitHub は 100MB を超えるファイルを push できない
+HISTORY_RESET_SIZE = 1500 * 1024 * 1024  # 音声リポジトリの履歴がこれを超えたら作り直す
 
 
 def load_db():
@@ -116,17 +120,17 @@ def publish_audio(ep):
     if not UPLOAD:
         print("   （--no-upload のためアップロードは省略）")
         return True
-    r = gh("release", "upload", RELEASE_TAG, path, "--clobber", "--repo", REPO, check=False)
-    os.remove(path)
-    if r.returncode != 0:
-        print("   アップロード失敗:", r.stderr.strip())
-    return r.returncode == 0
+    if ep["size"] > MAX_FILE_SIZE:
+        print("   100MB近いため公開できません（GitHubの上限）")
+        os.remove(path)
+        return False
+    os.replace(path, os.path.join(AUDIO_SITE, ep["file"]))  # push は push_audio() でまとめて行う
+    return True
 
 
-def ensure_release():
-    if UPLOAD and gh("release", "view", RELEASE_TAG, "--repo", REPO, check=False).returncode != 0:
-        gh("release", "create", RELEASE_TAG, "--repo", REPO, "--title", "音声ファイル置き場",
-           "--notes", "podcast.py が自動で管理しています")
+def ensure_audio_site():
+    if UPLOAD and not os.path.isdir(os.path.join(AUDIO_SITE, ".git")):
+        git("clone", "https://github.com/{}.git".format(AUDIO_REPO), AUDIO_SITE)
 
 
 def sorted_episodes(db):
@@ -204,15 +208,40 @@ def write_player(db):
 def prune(db, keep):
     for ep in sorted_episodes(db)[keep:]:
         print(" 🗑 古い回を削除:", ep["title"])
-        if UPLOAD:
-            gh("release", "delete-asset", RELEASE_TAG, ep["file"], "--yes", "--repo", REPO, check=False)
+        path = os.path.join(AUDIO_SITE, ep["file"])
+        if UPLOAD and os.path.exists(path):
+            os.remove(path)
         del db[ep["id"]]
 
 
-def git(*args):
+def git(*args, cwd=ROOT):
     helper = "!'{}' auth git-credential".format(GH)
     return subprocess.run(["git", "-c", "credential.helper=", "-c", "credential.helper=" + helper] + list(args),
-                          cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+                          cwd=cwd, capture_output=True, text=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+
+
+def dir_size(path):
+    return sum(os.path.getsize(os.path.join(d, f)) for d, _, files in os.walk(path) for f in files)
+
+
+def push_audio():
+    git("add", "-A", cwd=AUDIO_SITE)
+    if git("diff", "--cached", "--quiet", cwd=AUDIO_SITE).returncode == 0:
+        return
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if dir_size(os.path.join(AUDIO_SITE, ".git")) > HISTORY_RESET_SIZE:
+        # 削除済みの古い音声が履歴に溜まったので、今あるファイルだけの履歴に作り直す
+        print("音声リポジトリの履歴を整理します")
+        git("checkout", "--orphan", "fresh", cwd=AUDIO_SITE)
+        git("commit", "-m", "音声ファイル（履歴を整理） " + stamp, cwd=AUDIO_SITE)
+        git("branch", "-D", "main", cwd=AUDIO_SITE)
+        git("branch", "-m", "main", cwd=AUDIO_SITE)
+        r = git("push", "--force", "origin", "main", cwd=AUDIO_SITE)
+        git("gc", "--prune=now", cwd=AUDIO_SITE)
+    else:
+        git("commit", "-m", "音声更新 " + stamp, cwd=AUDIO_SITE)
+        r = git("push", "origin", "main", cwd=AUDIO_SITE)
+    print("音声をGitHubへ反映しました" if r.returncode == 0 else "音声のpush失敗: " + r.stderr.strip())
 
 
 def push_docs():
@@ -248,7 +277,7 @@ def cmd_update(args):
     subprocess.run([YTDLP, "-U"], capture_output=True)  # YouTube側の仕様変更に追従
     os.makedirs(WORK_DIR, exist_ok=True)
     os.makedirs(DOCS, exist_ok=True)
-    ensure_release()
+    ensure_audio_site()
     ensure_cover()
     db = load_db()
     print("チャンネルの新着を確認中…")
@@ -271,6 +300,7 @@ def cmd_update(args):
     write_feed(db)
     write_player(db)
     if UPLOAD:
+        push_audio()
         push_docs()
     print("完了: {} エピソード / フィード: {}feed.xml".format(len(db), PAGES_URL))
     return 1 if new and failed == len(new) else 0
@@ -281,7 +311,7 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     u = sub.add_parser("update", help="新着を取得して公開")
     u.add_argument("--limit", type=int, default=10, help="チャンネルの最新何件を対象にするか")
-    u.add_argument("--keep", type=int, default=30, help="公開しておく最大件数（0=無制限）")
+    u.add_argument("--keep", type=int, default=15, help="公開しておく最大件数（0=無制限）")
     u.add_argument("--no-upload", action="store_true", help="GitHubへ公開せず手元で試すだけ")
     args = p.parse_args()
     return cmd_update(args)
