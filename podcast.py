@@ -62,6 +62,17 @@ def list_channel(limit):
     return [line.split("\t", 1) for line in out.splitlines() if "\t" in line]
 
 
+def remux_m4a(path):
+    """YouTubeのDASH形式m4aはApple Podcastsで再生できないので、再エンコードせず通常のm4aに詰め替える。"""
+    tmp = path + ".remux.m4a"
+    r = subprocess.run(["avconvert", "--preset", "PresetPassthrough", "--source", path,
+                        "--output", tmp, "--replace"], capture_output=True, text=True)
+    if r.returncode == 0 and os.path.exists(tmp):
+        os.replace(tmp, path)
+    else:
+        print("   m4aの詰め替えに失敗:", r.stderr.strip() or r.stdout.strip())
+
+
 def download(vid):
     """音声を work/ep-<id>.m4a に取得してメタデータを返す。YouTube側が不安定なので数回試す。"""
     url = "https://www.youtube.com/watch?v=" + vid
@@ -84,6 +95,8 @@ def download(vid):
         info = json.load(f)
     os.remove(info_path)
     fname = audio[0]
+    if fname.endswith(".m4a"):
+        remux_m4a(os.path.join(WORK_DIR, fname))
     return {
         "id": vid,
         "title": info.get("title", vid),
