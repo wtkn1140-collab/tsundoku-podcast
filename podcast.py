@@ -174,7 +174,8 @@ def write_feed(db):
   <language>ja</language>
   <description>YouTube「積読チャンネル」の音声を個人用にポッドキャスト化したフィード</description>
   <itunes:author>積読チャンネル</itunes:author>
-  <itunes:block>Yes</itunes:block>
+  <itunes:category text="Education"/>
+  <itunes:explicit>false</itunes:explicit>
   <itunes:image href="{img}"/>
 {items}
 </channel>
