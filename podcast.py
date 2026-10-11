@@ -103,7 +103,7 @@ def download(vid):
         remux_m4a(os.path.join(WORK_DIR, fname))
     return {
         "id": vid,
-        "title": info.get("title", vid),
+        "title": info.get("title", vid).lstrip("\ufeff"),
         "description": info.get("description", ""),
         "upload_date": info.get("upload_date", ""),
         "timestamp": info.get("timestamp"),
@@ -168,7 +168,7 @@ def write_feed(db):
     <itunes:duration>{dur}</itunes:duration>
     <itunes:image href="{img}"/>
   </item>""".format(t=esc(ep["title"]), id=ep["id"], d=pub_date(ep), desc=esc(ep["description"]),
-                    url=AUDIO_BASE + ep["file"], size=ep["size"], mime=ep["mime"],
+                    url=audio_url(ep), size=ep["size"], mime=ep["mime"],
                     dur=hms(ep["duration"]), img=esc(ep["thumbnail"])))
     feed = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
@@ -194,7 +194,7 @@ def write_player(db):
     eps = []
     for ep in sorted_episodes(db):
         e = {k: ep[k] for k in ("id", "title", "upload_date", "duration", "thumbnail")}
-        e["url"] = AUDIO_BASE + ep["file"]
+        e["url"] = audio_url(ep)
         eps.append(e)
     with open(os.path.join(ROOT, "player_template.html"), encoding="utf-8") as f:
         tpl = f.read()
@@ -205,8 +205,14 @@ def write_player(db):
         f.write(page)
 
 
+def audio_url(ep):
+    # 過去回は保管用リポジトリ（archive1, 2, ...）に置き、audio_base に配信元を記録している
+    return ep.get("audio_base", AUDIO_BASE) + ep["file"]
+
+
 def prune(db, keep):
-    for ep in sorted_episodes(db)[keep:]:
+    """最新側の音声だけを keep 件に保つ。保管用リポジトリの過去回は消さない。"""
+    for ep in [e for e in sorted_episodes(db) if not e.get("archive")][keep:]:
         print(" 🗑 古い回を削除:", ep["title"])
         path = os.path.join(AUDIO_SITE, ep["file"])
         if UPLOAD and os.path.exists(path):
@@ -294,7 +300,7 @@ def cmd_update(args):
         else:
             failed += 1
             print("   取得失敗。次回の実行で再試行します")
-    if args.keep and len(db) > args.keep:
+    if args.keep:
         prune(db, args.keep)
     save_db(db)
     write_feed(db)
